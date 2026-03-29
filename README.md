@@ -1,8 +1,8 @@
-SpookyHash is a fast and thorough 128-bit noncryptographic hash function I first published in 2012. 20.6GB/sec for 16384 byte keys.
+SpookyHash is a fast and thorough 128-bit noncryptographic hash function by Bob Jenkins (me) in 2012. It does not use SIMD instructions, it's just normal 64-bit arithmetic, plus xor barrelshift, allowing a lot of instruction-level parallelism.
 
 Documentation: https://burtleburtle.net/bob/hash/spooky.html .
 
-There is a Rust translation in the `rust/` directory. It produces identical hashes to the C++ implementation. Throughput below is from `DoTimingSmall` (10 million iterations, cached, on one machine); C++ compiled with `g++ -O3`, Rust with `cargo build --release`.
+Claude made a Rust translation in the `rust/` directory. It produces identical hashes to the C++ implementation. Throughput below is from `DoTimingSmall` (10 million iterations, cached, on one machine); C++ compiled with `g++ -O3`, Rust with `cargo build --release`.
 
 | bytes | C++ GB/s | Rust GB/s |
 |------:|---------:|----------:|
@@ -21,3 +21,5 @@ There is a Rust translation in the `rust/` directory. It produces identical hash
 |  4096 |    17.82 |     16.97 |
 |  8192 |    18.68 |     18.03 |
 | 16384 |    19.54 |     18.62 |
+
+Running it 16 ways in parallel (on a 16-core processor) was 6.5GB/sec per process, or 105GB/sec total.
