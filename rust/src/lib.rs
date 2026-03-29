@@ -22,7 +22,17 @@ fn read_u32(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(buf[off..off + 4].try_into().unwrap())
 }
 
-// Used for messages >= 192 bytes. Fully overwrites internal state every 96 bytes.
+// This is used if the input is 96 bytes long or longer.
+//
+// The internal state is fully overwritten every 96 bytes.
+// Every input bit appears to cause at least 128 bits of entropy
+// before 96 other bytes are combined, when run forward or backward
+//   For every input bit,
+//   Two inputs differing in just that input bit
+//   Where "differ" means xor or subtraction
+//   And the base value is random
+//   When run forward or backwards one Mix
+// I tried 3 pairs of each; they all differed by at least 212 bits.
 fn mix(data: &[u8], off: usize, h: &mut [u64; 12]) {
     let d = |i: usize| read_u64(data, off + i * 8);
     h[0]  = h[0].wrapping_add(d(0));   h[2]  ^= h[10]; h[11] ^= h[0];  h[0]  = rot64(h[0],  11); h[11] = h[11].wrapping_add(h[1]);
@@ -39,7 +49,20 @@ fn mix(data: &[u8], off: usize, h: &mut [u64; 12]) {
     h[11] = h[11].wrapping_add(d(11)); h[1]  ^= h[9];  h[10] ^= h[11]; h[11] = rot64(h[11], 46); h[10] = h[10].wrapping_add(h[0]);
 }
 
-// Mix all 12 inputs so that h0, h1 are a hash of them all. Three iterations.
+// Mix all 12 inputs together so that h0, h1 are a hash of them all.
+//
+// For two inputs differing in just the input bits
+// Where "differ" means xor or subtraction
+// And the base value is random, or a counting value starting at that bit
+// The final result will have each bit of h0, h1 flip
+// For every input bit,
+// with probability 50 +- .3%
+// For every pair of input bits,
+// with probability 50 +- 3%
+//
+// This does not rely on the last Mix() call having already mixed some.
+// Two iterations was almost good enough for a 64-bit result, but a
+// 128-bit result is reported, so End() does three iterations.
 fn end_partial(h: &mut [u64; 12]) {
     h[11] = h[11].wrapping_add(h[1]);  h[2]  ^= h[11]; h[1]  = rot64(h[1],  44);
     h[0]  = h[0].wrapping_add(h[2]);   h[3]  ^= h[0];  h[2]  = rot64(h[2],  15);
@@ -64,7 +87,19 @@ fn mix_end(data: &[u8], off: usize, h: &mut [u64; 12]) {
     end_partial(h);
 }
 
-// Mix all 4 inputs together (used in the short path).
+// The goal is for each bit of the input to expand into 128 bits of
+//   apparent entropy before it is fully overwritten.
+// n trials both set and cleared at least m bits of h0 h1 h2 h3
+//   n: 2   m: 29
+//   n: 3   m: 46
+//   n: 4   m: 57
+//   n: 5   m: 107
+//   n: 6   m: 146
+//   n: 7   m: 152
+// when run forwards or backwards
+// for all 1-bit and 2-bit diffs
+// with diffs defined by either xor or subtraction
+// with a base of all zeros plus a counter, or plus another bit, or random
 fn short_mix(h: &mut [u64; 4]) {
     h[2] = rot64(h[2], 50); h[2] = h[2].wrapping_add(h[3]); h[0] ^= h[2];
     h[3] = rot64(h[3], 52); h[3] = h[3].wrapping_add(h[0]); h[1] ^= h[3];
@@ -80,6 +115,16 @@ fn short_mix(h: &mut [u64; 4]) {
     h[1] = rot64(h[1], 36); h[1] = h[1].wrapping_add(h[2]); h[3] ^= h[1];
 }
 
+// Mix all 4 inputs together so that h0, h1 are a hash of them all.
+//
+// For two inputs differing in just the input bits
+// Where "differ" means xor or subtraction
+// And the base value is random, or a counting value starting at that bit
+// The final result will have each bit of h0, h1 flip
+// For every input bit,
+// with probability 50 +- .3% (it is probably better than that)
+// For every pair of input bits,
+// with probability 50 +- .75% (the worst case is approximately that)
 fn short_end(h: &mut [u64; 4]) {
     h[3] ^= h[2]; h[2] = rot64(h[2], 15); h[3] = h[3].wrapping_add(h[2]);
     h[0] ^= h[3]; h[3] = rot64(h[3], 52); h[0] = h[0].wrapping_add(h[3]);
