@@ -22,6 +22,13 @@ fn read_u32(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(buf[off..off + 4].try_into().unwrap())
 }
 
+// Unaligned u64 read with no bounds check, matching C++ ALLOW_UNALIGNED_READS.
+// Safety: caller must ensure off..off+8 is within buf.
+#[inline]
+unsafe fn read_u64_unchecked(buf: &[u8], off: usize) -> u64 {
+    (buf.as_ptr().add(off) as *const u64).read_unaligned()
+}
+
 // This is used if the input is 96 bytes long or longer.
 //
 // The internal state is fully overwritten every 96 bytes.
@@ -34,7 +41,8 @@ fn read_u32(buf: &[u8], off: usize) -> u32 {
 //   When run forward or backwards one Mix
 // I tried 3 pairs of each; they all differed by at least 212 bits.
 fn mix(data: &[u8], off: usize, h: &mut [u64; 12]) {
-    let d = |i: usize| read_u64(data, off + i * 8);
+    // Safety: callers only call mix on complete 96-byte blocks within data.
+    let d = |i: usize| unsafe { read_u64_unchecked(data, off + i * 8) };
     h[0]  = h[0].wrapping_add(d(0));   h[2]  ^= h[10]; h[11] ^= h[0];  h[0]  = rot64(h[0],  11); h[11] = h[11].wrapping_add(h[1]);
     h[1]  = h[1].wrapping_add(d(1));   h[3]  ^= h[11]; h[0]  ^= h[1];  h[1]  = rot64(h[1],  32); h[0]  = h[0].wrapping_add(h[2]);
     h[2]  = h[2].wrapping_add(d(2));   h[4]  ^= h[0];  h[1]  ^= h[2];  h[2]  = rot64(h[2],  43); h[1]  = h[1].wrapping_add(h[3]);
@@ -79,8 +87,9 @@ fn end_partial(h: &mut [u64; 12]) {
 }
 
 fn mix_end(data: &[u8], off: usize, h: &mut [u64; 12]) {
+    // Safety: callers pass a SC_BLOCK_SIZE (96-byte) buffer fully initialized.
     for i in 0..12 {
-        h[i] = h[i].wrapping_add(read_u64(data, off + i * 8));
+        h[i] = h[i].wrapping_add(unsafe { read_u64_unchecked(data, off + i * 8) });
     }
     end_partial(h);
     end_partial(h);
@@ -150,17 +159,20 @@ fn short(message: &[u8], hash1: &mut u64, hash2: &mut u64) {
     let mut offset = 0usize;
     if length > 15 {
         let block_end = (length / 32) * 32;
+        // Safety: block_end = (length/32)*32 <= length, and each read is within a
+        // complete 32-byte block, so all offsets are within message.
         while offset < block_end {
-            h[2] = h[2].wrapping_add(read_u64(message, offset));
-            h[3] = h[3].wrapping_add(read_u64(message, offset + 8));
+            h[2] = h[2].wrapping_add(unsafe { read_u64_unchecked(message, offset) });
+            h[3] = h[3].wrapping_add(unsafe { read_u64_unchecked(message, offset + 8) });
             short_mix(&mut h);
-            h[0] = h[0].wrapping_add(read_u64(message, offset + 16));
-            h[1] = h[1].wrapping_add(read_u64(message, offset + 24));
+            h[0] = h[0].wrapping_add(unsafe { read_u64_unchecked(message, offset + 16) });
+            h[1] = h[1].wrapping_add(unsafe { read_u64_unchecked(message, offset + 24) });
             offset += 32;
         }
         if total_remainder >= 16 {
-            h[2] = h[2].wrapping_add(read_u64(message, offset));
-            h[3] = h[3].wrapping_add(read_u64(message, offset + 8));
+            // Safety: total_remainder >= 16 means at least 16 more bytes remain.
+            h[2] = h[2].wrapping_add(unsafe { read_u64_unchecked(message, offset) });
+            h[3] = h[3].wrapping_add(unsafe { read_u64_unchecked(message, offset + 8) });
             short_mix(&mut h);
             offset += 16;
         }

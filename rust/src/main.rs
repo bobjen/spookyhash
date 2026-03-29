@@ -146,7 +146,36 @@ fn test_pieces() {
     }
 }
 
+fn do_timing_small(seed: u64) {
+    const BUFSIZE: usize = 1 << 14;
+    const NUMITER: usize = 10_000_000;
+    println!("\ntesting timing of hashing up to {} cached aligned bytes {} times ...", BUFSIZE, NUMITER);
+
+    let mut buf = [0u64; BUFSIZE / 8];
+    for i in 0..BUFSIZE / 8 {
+        buf[i] = i as u64 + seed;
+    }
+    let buf_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(buf.as_ptr() as *const u8, BUFSIZE)
+    };
+
+    let mut size = 1usize;
+    while size <= BUFSIZE {
+        let mut hash1 = seed;
+        let mut hash2 = seed + size as u64;
+        let t0 = std::time::Instant::now();
+        for _ in 0..NUMITER {
+            hash128(&buf_bytes[..size], &mut hash1, &mut hash2);
+        }
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        println!("{} bytes: hash is {:016x} {:016x}, time is {} milliseconds",
+            size, hash1, hash2, ms);
+        size <<= 1;
+    }
+}
+
 fn main() {
     test_results();
     test_pieces();
+    do_timing_small(1);
 }
